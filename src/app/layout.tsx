@@ -5,6 +5,7 @@ import "@rainbow-me/rainbowkit/styles.css";
 import { Providers } from "./providers";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { TopBar } from "@/components/layout/TopBar";
+import { Analytics } from "@vercel/analytics/next";
 
 const inter = Inter({ subsets: ["latin"] });
 
@@ -31,6 +32,7 @@ export default function RootLayout({
           <TopBar />
           <main className="pl-[220px] pt-12 min-h-screen">{children}</main>
         </Providers>
+        <Analytics />
       </body>
     </html>
   );
