@@ -42,6 +42,18 @@ const CHAIN_COINGECKO_ID: Record<number, string> = {
   10: "optimistic-ethereum",
 };
 
+// Fallback: tokeny które mają tę samą cenę na każdej sieci (stablecoiny, BTC)
+const STABLE_PRICE_FALLBACKS: Record<string, string> = {
+  "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913": "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48", // Base USDC -> Ethereum USDC
+  "0x50c5725949a6f0c72e6c4a641f24049a917db0cb": "0x6b175474e89094c44da98b954eedeac495271d0f", // Base DAI -> Ethereum DAI
+  "0x3c499c542cef5e3811e1192ce70d8cc03d5c3359": "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48", // Polygon USDC -> Ethereum USDC
+  "0x8f3cf7ad23cd3cadbd9735aff958023239c6a063": "0x6b175474e89094c44da98b954eedeac495271d0f", // Polygon DAI -> Ethereum DAI
+  "0xaf88d065e77c8cc2239327c5edb3a432268e5831": "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48", // Arbitrum USDC -> Ethereum USDC
+  "0x912ce59144191c1204e64559fe8253a0e49e6548": "0x912ce59144191c1204e64559fe8253a0e49e6548", // ARB -> nie ma fallbacku
+  "0x2f2a2543b76a4166549f7aab2e75bef0aefc5b0f": "0x2260fac5e5542a773aa44fbcfedf7c193bc2c599", // Arbitrum WBTC -> Ethereum WBTC
+  "0x7ceb23fd6bc0add59e62ac25578270cff1b9f619": "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2", // Polygon WETH -> Ethereum WETH
+};
+
 const COINGECKO_NATIVE_ID: Record<number, string> = {
   1: "ethereum",
   8453: "ethereum",    // Base uses ETH
@@ -88,6 +100,7 @@ async function fetchPrices(
     }
   }
 
+  // First pass: fetch prices per chain
   for (const [chainId, group] of byChain) {
     try {
       // Native price
@@ -108,27 +121,82 @@ async function fetchPrices(
       if (group.erc20.length > 0) {
         const platform = CHAIN_COINGECKO_ID[chainId];
         if (platform) {
-          // Fetch in chunks of 30 (CoinGecko limit)
+          // Skip base platform entirely if we hit rate limits often
           const chunkSize = 30;
           for (let i = 0; i < group.erc20.length; i += chunkSize) {
             const chunk = group.erc20.slice(i, i + chunkSize);
-            const res = await fetch(
-              `https://api.coingecko.com/api/v3/simple/token_price/${platform}?contract_addresses=${chunk.join(",")}&vs_currencies=usd`
-            );
-            const data = await res.json();
-            for (const addr of chunk) {
-              const lc = addr.toLowerCase();
-              if (data[lc]?.usd) {
-                const key = `${chainId}:${lc}`;
-                result[key] = data[lc].usd;
-                priceCache.set(key, { price: data[lc].usd, ts: Date.now() });
+            try {
+              const res = await fetch(
+                `https://api.coingecko.com/api/v3/simple/token_price/${platform}?contract_addresses=${chunk.join(",")}&vs_currencies=usd`
+              );
+              const data = await res.json();
+              for (const addr of chunk) {
+                const lc = addr.toLowerCase();
+                if (data[lc]?.usd) {
+                  const key = `${chainId}:${lc}`;
+                  result[key] = data[lc].usd;
+                  priceCache.set(key, { price: data[lc].usd, ts: Date.now() });
+                }
               }
+            } catch {
+              // CoinGecko error for this chunk (rate limit, etc.) — skip silently
             }
           }
         }
       }
     } catch {
       // Skip failed chain
+    }
+  }
+
+  // Second pass: fallback — for tokens still missing a price, try the mainnet
+  // Ethereum address if a stable price fallback exists
+  const ethereumGroup = byChain.get(1);
+  const ethereumPrices: Record<string, number> = {};
+  if (ethereumGroup?.erc20.length) {
+    // Collect already-fetched Ethereum prices
+    for (const addr of ethereumGroup.erc20) {
+      const key = `1:${addr.toLowerCase()}`;
+      if (result[key] !== undefined) {
+        ethereumPrices[addr.toLowerCase()] = result[key];
+      }
+    }
+    // If we don't have them yet, fetch Ethereum prices for the missing tokens
+    const ethereumMissing = [...byChain.entries()]
+      .filter(([cid]) => cid !== 1)
+      .flatMap(([_, g]) => g.erc20)
+      .map((addr) => STABLE_PRICE_FALLBACKS[addr.toLowerCase()])
+      .filter(Boolean) as string[];
+    const uniqueMissing = [...new Set(ethereumMissing)];
+    const toFetch = uniqueMissing.filter((addr) => !(addr in ethereumPrices));
+    if (toFetch.length > 0) {
+      try {
+        const res = await fetch(
+          `https://api.coingecko.com/api/v3/simple/token_price/ethereum?contract_addresses=${toFetch.join(",")}&vs_currencies=usd`
+        );
+        const data = await res.json();
+        for (const addr of toFetch) {
+          if (data[addr]?.usd) {
+            ethereumPrices[addr] = data[addr].usd;
+          }
+        }
+      } catch {
+        // Ignore fallback fetch error
+      }
+    }
+  }
+
+  // Apply fallbacks to missing tokens
+  for (const [chainId, group] of byChain) {
+    if (chainId === 1) continue;
+    for (const addr of group.erc20) {
+      const key = `${chainId}:${addr.toLowerCase()}`;
+      if (result[key] !== undefined) continue; // already has a price
+      const ethereumAddr = STABLE_PRICE_FALLBACKS[addr.toLowerCase()];
+      if (ethereumAddr && ethereumPrices[ethereumAddr] !== undefined) {
+        result[key] = ethereumPrices[ethereumAddr];
+        priceCache.set(key, { price: ethereumPrices[ethereumAddr], ts: Date.now() });
+      }
     }
   }
 
