@@ -1,527 +1,477 @@
 "use client";
 
-import { useState, useCallback, useMemo } from "react";
-import { useAccount, useBalance, useSendTransaction, useSimulateContract } from "wagmi";
-import { formatEther, parseEther } from "viem";
-import { Settings, ArrowDownUp, RefreshCw } from "lucide-react";
+import { useState, useMemo } from "react";
+import { useAccount, useBalance } from "wagmi";
+import { motion } from "framer-motion";
+import {
+  ArrowDownUp,
+  Settings,
+  RefreshCw,
+  Info,
+  TrendingUp,
+  TrendingDown,
+  BarChart3,
+  Wallet,
+} from "lucide-react";
+import { TokenSelectModal } from "./TokenSelectModal";
 import type { Token, SwapQuote } from "@/types";
+import { TOKEN_LISTS } from "@/lib/prices";
+import { formatEther } from "viem";
 
-const POPULAR_TOKENS: Token[] = [
-  { address: "0x0000000000000000000000000000000000000000", symbol: "ETH", name: "Ether", decimals: 18, chainId: 1, price: 3200 },
-  { address: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", symbol: "USDC", name: "USD Coin", decimals: 6, chainId: 1, price: 1 },
-  { address: "0xdAC17F958D2ee523a2206206994597C13D831ec7", symbol: "USDT", name: "Tether", decimals: 6, chainId: 1, price: 1 },
-  { address: "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599", symbol: "WBTC", name: "Wrapped Bitcoin", decimals: 8, chainId: 1, price: 68000 },
-];
-
-const PRESET_SLIPPAGE = [0.1, 0.5, 1] as const;
-
-type QuoteState =
-  | { status: "idle" }
-  | { status: "loading" }
-  | { status: "success"; quote: SwapQuote }
-  | { status: "error"; error: string };
-
-type TabMode = "market" | "limit";
-
-const EXPIRY_OPTIONS = [
-  { label: "5 min", value: 300 },
-  { label: "15 min", value: 900 },
-  { label: "1 hour", value: 3600 },
-  { label: "4 hours", value: 14400 },
-  { label: "24 hours", value: 86400 },
-] as const;
-
-function TokenSelector({
-  token,
-  tokens,
-  amount,
-  onTokenChange,
-  onAmountChange,
-  balance,
-  balanceUSD,
-  side,
-}: {
-  token: Token | null;
-  tokens: Token[];
-  amount: string;
-  onTokenChange: (t: Token) => void;
-  onAmountChange: (v: string) => void;
-  balance: string;
-  balanceUSD: number;
-  side: "from" | "to";
-}) {
-  const [open, setOpen] = useState(false);
-
-  return (
-    <div className="rounded-2xl bg-white/5 p-4 transition-colors hover:bg-white/[0.07]">
-      <div className="mb-2 flex items-center justify-between text-xs text-zinc-500">
-        <span>{side === "from" ? "You Pay" : "You Receive"}</span>
-        {balance && (
-          <button
-            type="button"
-            className="hover:text-zinc-300"
-            onClick={() => {
-              if (side === "from" && balance) {
-                onAmountChange(formatEther(BigInt(balance)));
-              }
-            }}
-          >
-            Balance: {parseFloat(formatEther(BigInt(balance || "0"))).toFixed(4)}
-          </button>
-        )}
-      </div>
-      <div className="flex items-center gap-3">
-        <button
-          type="button"
-          onClick={() => setOpen(!open)}
-          className="flex shrink-0 items-center gap-2 rounded-xl bg-white/10 px-3 py-2 text-sm font-medium transition-colors hover:bg-white/20"
-        >
-          {token ? (
-            <>
-              {token.logoURI ? (
-                <img src={token.logoURI} alt="" className="h-6 w-6 rounded-full" />
-              ) : (
-                <div className="flex h-6 w-6 items-center justify-center rounded-full bg-violet-600 text-[10px] font-bold">
-                  {token.symbol[0]}
-                </div>
-              )}
-              <span>{token.symbol}</span>
-            </>
-          ) : (
-            <span className="text-zinc-400">Select token</span>
-          )}
-          <svg className="h-4 w-4 text-zinc-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-          </svg>
-        </button>
-        <input
-          type="text"
-          inputMode="decimal"
-          autoComplete="off"
-          pattern="^[0-9]*[.,]?[0-9]*$"
-          placeholder="0.0"
-          value={amount}
-          onChange={(e) => {
-            const v = e.target.value.replace(/[^0-9.]/g, "");
-            if ((v.match(/\./g) || []).length <= 1) onAmountChange(v);
-          }}
-          readOnly={side === "to"}
-          className="flex-1 bg-transparent text-right text-2xl font-semibold outline-none placeholder:text-zinc-600"
-        />
-      </div>
-      {token?.price && amount && (
-        <div className="mt-1 text-right text-xs text-zinc-500">
-          ~${(parseFloat(amount || "0") * token.price).toFixed(2)}
-        </div>
-      )}
-      {balanceUSD > 0 && (
-        <div className="mt-1 text-right text-xs text-zinc-500">
-          ${balanceUSD.toFixed(2)}
-        </div>
-      )}
-
-      {/* Dropdown */}
-      {open && (
-        <>
-          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          <div className="absolute left-4 right-4 z-50 mt-2 max-h-64 overflow-y-auto rounded-xl border border-white/10 bg-zinc-900 p-2 shadow-2xl">
-            {tokens.map((t) => (
-              <button
-                key={t.address}
-                type="button"
-                onClick={() => {
-                  onTokenChange(t);
-                  setOpen(false);
-                }}
-                className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 transition-colors hover:bg-white/10"
-              >
-                {t.logoURI ? (
-                  <img src={t.logoURI} alt="" className="h-7 w-7 rounded-full" />
-                ) : (
-                  <div className="flex h-7 w-7 items-center justify-center rounded-full bg-violet-600 text-xs font-bold">
-                    {t.symbol[0]}
-                  </div>
-                )}
-                <div className="text-left">
-                  <div className="text-sm font-medium">{t.symbol}</div>
-                  <div className="text-xs text-zinc-500">{t.name}</div>
-                </div>
-                <div className="ml-auto text-right">
-                  <div className="text-sm">
-                    {parseFloat(formatEther(BigInt(balance || "0"))).toFixed(4)}
-                  </div>
-                  {t.price && (
-                    <div className="text-xs text-zinc-500">
-                      ${(parseFloat(formatEther(BigInt(balance || "0"))) * t.price).toFixed(2)}
-                    </div>
-                  )}
-                </div>
-              </button>
-            ))}
-          </div>
-        </>
-      )}
-    </div>
-  );
-}
+const SLIPPAGE_OPTIONS = [0.1, 0.5, 1.0, 2.0];
 
 export default function SwapWidget() {
   const { address, isConnected } = useAccount();
-  const [tabMode, setTabMode] = useState<TabMode>("market");
-  const [fromToken, setFromToken] = useState<Token>(POPULAR_TOKENS[0]);
-  const [toToken, setToToken] = useState<Token>(POPULAR_TOKENS[1]);
+  const [fromToken, setFromToken] = useState<Token | null>(null);
+  const [toToken, setToToken] = useState<Token | null>(null);
   const [fromAmount, setFromAmount] = useState("");
   const [toAmount, setToAmount] = useState("");
-  const [quote, setQuote] = useState<QuoteState>({ status: "idle" });
   const [slippage, setSlippage] = useState(0.5);
   const [customSlippage, setCustomSlippage] = useState("");
-  const [showSettings, setShowSettings] = useState(false);
-
-  // Limit order state
+  const [mode, setMode] = useState<"market" | "limit">("market");
   const [limitPrice, setLimitPrice] = useState("");
-  const [expiry, setExpiry] = useState<number>(EXPIRY_OPTIONS[2].value);
+  const [loading, setLoading] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
+  const [tokenModal, setTokenModal] = useState<"from" | "to" | null>(null);
+  const [showChart, setShowChart] = useState(false);
 
-  // Wagmi hooks
+  const chainId = 1; // default to Ethereum
+  const tokens = useMemo(() => TOKEN_LISTS[chainId] ?? TOKEN_LISTS[1], [chainId]);
+
   const { data: fromBalance } = useBalance({
     address,
-    token: fromToken.address === "0x0000000000000000000000000000000000000000" ? undefined : fromToken.address as `0x${string}`,
+    token: fromToken?.address as `0x${string}` | undefined,
+    chainId,
   });
 
-  const { data: toBalance } = useBalance({
-    address,
-    token: toToken.address === "0x0000000000000000000000000000000000000000" ? undefined : toToken.address as `0x${string}`,
-  });
-
-  const fromBalanceFormatted = fromBalance?.value?.toString() || "0";
-  const fromBalanceUSD = fromBalance ? parseFloat(formatEther(fromBalance.value)) * (fromToken.price || 0) : 0;
-  const toBalanceUSD = toBalance ? parseFloat(formatEther(toBalance.value)) * (toToken.price || 0) : 0;
-
-  const fromAmountWei = useMemo(() => {
-    try {
-      return parseEther(fromAmount || "0");
-    } catch {
-      return BigInt(0);
-    }
-  }, [fromAmount]);
-
-  const insufficientBalance = useMemo(() => {
-    if (!fromAmount || !fromBalance) return false;
-    return fromAmountWei > fromBalance.value;
-  }, [fromAmount, fromBalance, fromAmountWei]);
-
-  // Simulate swap contract call
-  const { data: simData, isLoading: simLoading } = useSimulateContract({
-    address: fromToken.address as `0x${string}`,
-    abi: [],
-    functionName: "transfer",
-    args: [],
-    query: { enabled: isConnected && !!fromAmount && !insufficientBalance },
-  });
-
-  const { sendTransaction, isPending: txPending } = useSendTransaction();
-
-  // Fetch quote
-  const fetchQuote = useCallback(async () => {
-    if (!fromAmount || !fromToken || !toToken) return;
-    setQuote({ status: "loading" });
-    try {
-      const res = await fetch("/api/swap/quote", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          fromToken: fromToken.address,
-          toToken: toToken.address,
-          amount: fromAmount,
-          chainId: fromToken.chainId,
-        }),
-      });
-      if (!res.ok) {
-        const err = await res.text();
-        throw new Error(err || "Failed to fetch quote");
-      }
-      const data: SwapQuote = await res.json();
-      setQuote({ status: "success", quote: data });
-      setToAmount(data.toAmount);
-    } catch (e) {
-      setQuote({ status: "error", error: (e as Error).message || "Quote fetch failed" });
-    }
-  }, [fromAmount, fromToken, toToken]);
-
-  const handleSwapTokens = useCallback(() => {
-    const tmpT = fromToken;
+  const handleSwapTokens = () => {
+    const tempToken = fromToken;
     setFromToken(toToken);
-    setToToken(tmpT);
+    setToToken(tempToken);
     setFromAmount(toAmount);
     setToAmount(fromAmount);
-    setQuote({ status: "idle" });
-  }, [fromToken, toToken, fromAmount, toAmount]);
+  };
 
-  const handleSwap = useCallback(() => {
-    if (!simData?.request) return;
-    sendTransaction(simData.request);
-  }, [simData, sendTransaction]);
+  const handleMaxClick = () => {
+    if (fromBalance) {
+      setFromAmount(formatEther(fromBalance.value));
+    }
+  };
 
-  const activeSlippage = customSlippage ? parseFloat(customSlippage) : slippage;
+  const handleFromAmountChange = (val: string) => {
+    setFromAmount(val);
+    if (val && parseFloat(val) > 0) {
+      const mockPrice = mode === "market" ? 3245.12 : parseFloat(limitPrice) || 3245.12;
+      const estimated = parseFloat(val) * mockPrice * 0.997; // 0.3% fee
+      setToAmount(estimated.toFixed(6));
+    } else {
+      setToAmount("");
+    }
+  };
 
   return (
-    <div className="mx-auto w-full max-w-[420px]">
-      <div className="relative overflow-hidden rounded-3xl border border-white/10 bg-black/60 p-2 shadow-2xl backdrop-blur-xl">
-        {/* Header */}
-        <div className="flex items-center justify-between px-3 py-2">
-          <div className="flex gap-1 rounded-lg bg-white/5 p-0.5">
-            <button
-              type="button"
-              onClick={() => setTabMode("market")}
-              className={`rounded-md px-3 py-1.5 text-sm font-medium transition-all ${
-                tabMode === "market" ? "bg-violet-600 text-white shadow" : "text-zinc-400 hover:text-white"
-              }`}
-            >
-              Market
-            </button>
-            <button
-              type="button"
-              onClick={() => setTabMode("limit")}
-              className={`rounded-md px-3 py-1.5 text-sm font-medium transition-all ${
-                tabMode === "limit" ? "bg-violet-600 text-white shadow" : "text-zinc-400 hover:text-white"
-              }`}
-            >
-              Limit
-            </button>
+    <div className="flex flex-col lg:flex-row gap-6">
+      {/* Left: Swap Widget + Chart */}
+      <div className="flex-1 space-y-4">
+        {/* Price Chart Preview (when visible) */}
+        {showChart && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 200 }}
+            className="glass rounded-xl overflow-hidden"
+          >
+            <div className="h-full flex items-center justify-center text-gray-500 text-sm bg-gradient-to-b from-black/0 to-black/0 relative">
+              <div className="absolute inset-0 flex items-center justify-center">
+                <BarChart3 className="w-8 h-8 text-gray-700" />
+                <span className="ml-2">Chart loading...</span>
+              </div>
+            </div>
+          </motion.div>
+        )}
+
+        {/* Swap Form */}
+        <div className="glass rounded-2xl p-5 max-w-md mx-auto lg:mx-0">
+          {/* Header */}
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex gap-1 bg-white/5 rounded-lg p-0.5">
+              <button
+                onClick={() => setMode("market")}
+                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                  mode === "market"
+                    ? "bg-violet-500 text-white"
+                    : "text-gray-400 hover:text-white"
+                }`}
+              >
+                Market
+              </button>
+              <button
+                onClick={() => setMode("limit")}
+                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                  mode === "limit"
+                    ? "bg-violet-500 text-white"
+                    : "text-gray-400 hover:text-white"
+                }`}
+              >
+                Limit
+              </button>
+            </div>
+            <div className="flex gap-1">
+              <button
+                onClick={() => setShowChart(!showChart)}
+                className={`p-1.5 rounded-lg transition-colors ${
+                  showChart
+                    ? "bg-violet-500/20 text-violet-400"
+                    : "text-gray-500 hover:text-white"
+                }`}
+              >
+                <BarChart3 className="w-4 h-4" />
+              </button>
+              <button
+                onClick={() => setShowSettings(!showSettings)}
+                className="p-1.5 rounded-lg text-gray-500 hover:text-white transition-colors"
+              >
+                <Settings className="w-4 h-4" />
+              </button>
+            </div>
           </div>
-          <div className="relative">
-            <button
-              type="button"
-              onClick={() => setShowSettings(!showSettings)}
-              className="rounded-lg p-2 text-zinc-400 transition-colors hover:bg-white/10 hover:text-white"
+
+          {/* Slippage Settings */}
+          {showSettings && (
+            <motion.div
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: "auto" }}
+              className="overflow-hidden mb-4"
             >
-              <Settings className="h-5 w-5" />
-            </button>
-            {showSettings && (
-              <>
-                <div className="fixed inset-0 z-40" onClick={() => setShowSettings(false)} />
-                <div className="absolute right-0 top-12 z-50 w-72 rounded-xl border border-white/10 bg-zinc-900 p-4 shadow-2xl">
-                  <div className="mb-3 text-sm font-medium text-zinc-300">Slippage Tolerance</div>
-                  <div className="mb-3 flex gap-2">
-                    {PRESET_SLIPPAGE.map((s) => (
-                      <button
-                        key={s}
-                        type="button"
-                        onClick={() => {
-                          setSlippage(s);
-                          setCustomSlippage("");
-                        }}
-                        className={`flex-1 rounded-lg py-2 text-sm font-medium transition-all ${
-                          slippage === s && !customSlippage
-                            ? "bg-violet-600 text-white"
-                            : "bg-white/10 text-zinc-400 hover:bg-white/20"
-                        }`}
-                      >
-                        {s}%
-                      </button>
-                    ))}
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="text"
-                      inputMode="decimal"
-                      placeholder="Custom"
-                      value={customSlippage}
-                      onChange={(e) => {
-                        const v = e.target.value.replace(/[^0-9.]/g, "");
-                        setCustomSlippage(v);
-                      }}
-                      className="w-full rounded-lg bg-white/10 px-3 py-2 text-sm outline-none placeholder:text-zinc-600 focus:ring-1 focus:ring-violet-500"
-                    />
-                    <span className="text-sm text-zinc-500">%</span>
-                  </div>
-                  {activeSlippage > 5 && (
-                    <div className="mt-2 text-xs text-amber-400">
-                      High slippage tolerance. Transactions may be frontrun.
-                    </div>
+              <div className="bg-white/5 rounded-xl p-3 space-y-2">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-gray-400">Slippage Tolerance</span>
+                  {slippage > 1 && (
+                    <span className="text-yellow-400">High slippage ⚠</span>
                   )}
                 </div>
-              </>
-            )}
-          </div>
-        </div>
-
-        {/* Token Selectors */}
-        <div className="space-y-1 px-1 pb-1">
-          <TokenSelector
-            token={fromToken}
-            tokens={POPULAR_TOKENS}
-            amount={fromAmount}
-            onTokenChange={setFromToken}
-            onAmountChange={setFromAmount}
-            balance={fromBalanceFormatted}
-            balanceUSD={fromBalanceUSD}
-            side="from"
-          />
-          <div className="relative flex justify-center">
-            <button
-              type="button"
-              onClick={handleSwapTokens}
-              className="absolute z-10 flex h-10 w-10 items-center justify-center rounded-xl border-4 border-black bg-violet-600 text-white transition-colors hover:bg-violet-500"
-            >
-              <ArrowDownUp className="h-4 w-4" />
-            </button>
-          </div>
-          <TokenSelector
-            token={toToken}
-            tokens={POPULAR_TOKENS}
-            amount={toAmount}
-            onTokenChange={setToToken}
-            onAmountChange={() => {}}
-            balance={toBalance?.value?.toString() || "0"}
-            balanceUSD={toBalanceUSD}
-            side="to"
-          />
-        </div>
-
-        {/* Limit Order Panel */}
-        {tabMode === "limit" && (
-          <div className="mx-1 mb-2 space-y-2 rounded-xl border border-white/10 bg-white/[0.02] p-3">
-            <div>
-              <div className="mb-1 text-xs text-zinc-500">Limit Price</div>
-              <input
-                type="text"
-                inputMode="decimal"
-                placeholder="0.0"
-                value={limitPrice}
-                onChange={(e) => setLimitPrice(e.target.value.replace(/[^0-9.]/g, ""))}
-                className="w-full rounded-lg bg-white/10 px-3 py-2 text-sm outline-none placeholder:text-zinc-600 focus:ring-1 focus:ring-violet-500"
-              />
-            </div>
-            <div>
-              <div className="mb-1 text-xs text-zinc-500">Expiry</div>
-              <div className="flex gap-1.5">
-                {EXPIRY_OPTIONS.map((opt) => (
-                  <button
-                    key={opt.value}
-                    type="button"
-                    onClick={() => setExpiry(opt.value)}
-                    className={`flex-1 rounded-lg py-1.5 text-xs font-medium transition-all ${
-                      expiry === opt.value
-                        ? "bg-violet-600/30 text-violet-300"
-                        : "bg-white/5 text-zinc-500 hover:bg-white/10"
-                    }`}
-                  >
-                    {opt.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Quote Info */}
-        {quote.status === "loading" && (
-          <div className="mx-1 mb-2 flex items-center justify-center gap-2 rounded-xl bg-white/[0.02] py-3 text-sm text-zinc-400">
-            <RefreshCw className="h-4 w-4 animate-spin" />
-            Fetching best quote...
-          </div>
-        )}
-
-        {quote.status === "success" && (
-          <div className="mx-1 mb-2 space-y-1.5 rounded-xl bg-white/[0.02] px-3 py-3">
-            <div className="flex items-center justify-between text-xs text-zinc-500">
-              <span>Price</span>
-              <span className="text-zinc-300">
-                1 {quote.quote.fromToken.symbol} = {parseFloat(quote.quote.price).toFixed(6)} {quote.quote.toToken.symbol}
-              </span>
-            </div>
-            {quote.quote.priceImpact > 0.5 && (
-              <div className="flex items-center justify-between text-xs">
-                <span className="text-zinc-500">Price Impact</span>
-                <span className={quote.quote.priceImpact > 3 ? "text-red-400" : "text-amber-400"}>
-                  {quote.quote.priceImpact.toFixed(2)}%
-                </span>
-              </div>
-            )}
-            {quote.quote.route.length > 0 && (
-              <div className="flex items-center justify-between text-xs text-zinc-500">
-                <span>Route</span>
-                <div className="flex items-center gap-1">
-                  {quote.quote.route.map((r, i) => (
-                    <span key={i} className="flex items-center gap-1">
-                      {i > 0 && <span className="text-zinc-600">→</span>}
-                      <span className="rounded bg-white/10 px-1.5 py-0.5">{r.exchange}</span>
-                    </span>
+                <div className="flex gap-1">
+                  {SLIPPAGE_OPTIONS.map((s) => (
+                    <button
+                      key={s}
+                      onClick={() => {
+                        setSlippage(s);
+                        setCustomSlippage("");
+                      }}
+                      className={`flex-1 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                        slippage === s && !customSlippage
+                          ? "bg-violet-500/20 text-violet-300"
+                          : "bg-white/5 text-gray-400 hover:text-white"
+                      }`}
+                    >
+                      {s}%
+                    </button>
                   ))}
                 </div>
               </div>
+            </motion.div>
+          )}
+
+          {/* Limit Price Input */}
+          {mode === "limit" && (
+            <div className="mb-3">
+              <div className="text-xs text-gray-500 mb-1">Limit Price</div>
+              <div className="relative">
+                <input
+                  type="number"
+                  step="any"
+                  value={limitPrice}
+                  onChange={(e) => setLimitPrice(e.target.value)}
+                  placeholder="0.00"
+                  className="w-full px-3 py-2.5 rounded-xl bg-white/5 border border-white/10 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-violet-500"
+                />
+                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-gray-500">
+                  USD
+                </span>
+              </div>
+            </div>
+          )}
+
+          {/* From Token */}
+          <div className="bg-white/5 rounded-xl p-3 mb-2">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xs text-gray-500">You Pay</span>
+              {isConnected && fromBalance && (
+                <button
+                  onClick={handleMaxClick}
+                  className="text-xs text-violet-400 hover:text-violet-300"
+                >
+                  Balance: {parseFloat(formatEther(fromBalance.value)).toFixed(4)}
+                </button>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              <input
+                type="number"
+                step="any"
+                value={fromAmount}
+                onChange={(e) => handleFromAmountChange(e.target.value)}
+                placeholder="0.0"
+                className="flex-1 bg-transparent text-2xl font-bold text-white placeholder-gray-600 focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+              />
+              <button
+                onClick={() => setTokenModal("from")}
+                className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 transition-colors shrink-0"
+              >
+                {fromToken ? (
+                  <>
+                    <div className="w-5 h-5 rounded-full bg-gradient-to-br from-violet-500 to-fuchsia-500 flex items-center justify-center text-[8px] font-bold">
+                      {fromToken.symbol[0]}
+                    </div>
+                    <span className="text-sm font-medium">{fromToken.symbol}</span>
+                  </>
+                ) : (
+                  <span className="text-sm text-gray-400">Select token</span>
+                )}
+              </button>
+            </div>
+            {fromAmount && (
+              <div className="text-xs text-gray-500 mt-1">
+                ~$
+                {(parseFloat(fromAmount) * 3245.12).toLocaleString()}
+              </div>
             )}
-            <div className="flex items-center justify-between text-xs text-zinc-500">
-              <span>Gas</span>
-              <span className="text-zinc-300">
-                {formatEther(BigInt(quote.quote.gas))} ETH (${parseFloat(quote.quote.estimatedGasUSD).toFixed(2)})
-              </span>
-            </div>
-            <div className="flex items-center justify-between text-xs text-zinc-500">
-              <span>Network</span>
-              <span className="text-zinc-300">{quote.quote.exchange}</span>
-            </div>
           </div>
-        )}
 
-        {quote.status === "error" && (
-          <div className="mx-1 mb-2 rounded-xl bg-red-500/10 px-3 py-2.5 text-center text-sm text-red-400">
-            {quote.error}
-          </div>
-        )}
-
-        {insufficientBalance && (
-          <div className="mx-1 mb-2 rounded-xl bg-red-500/10 px-3 py-2.5 text-center text-sm text-red-400">
-            Insufficient {fromToken.symbol} balance
-          </div>
-        )}
-
-        {/* Action Button */}
-        <div className="px-1 pb-2">
-          {!isConnected ? (
+          {/* Swap Direction Button */}
+          <div className="flex justify-center -my-2 relative z-10">
             <button
-              type="button"
-              className="w-full rounded-xl bg-gradient-to-r from-violet-600 to-fuchsia-600 py-3.5 text-base font-semibold text-white transition-all hover:scale-[1.02] hover:from-violet-500 hover:to-fuchsia-500"
+              onClick={handleSwapTokens}
+              className="w-9 h-9 rounded-full bg-[#1a1a2e] border-4 border-black flex items-center justify-center hover:bg-white/10 transition-colors"
             >
+              <ArrowDownUp className="w-4 h-4 text-violet-400" />
+            </button>
+          </div>
+
+          {/* To Token */}
+          <div className="bg-white/5 rounded-xl p-3 mb-4">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xs text-gray-500">You Receive</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <input
+                type="number"
+                step="any"
+                value={toAmount}
+                readOnly
+                placeholder="0.0"
+                className="flex-1 bg-transparent text-2xl font-bold text-white placeholder-gray-600 focus:outline-none"
+              />
+              <button
+                onClick={() => setTokenModal("to")}
+                className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 transition-colors shrink-0"
+              >
+                {toToken ? (
+                  <>
+                    <div className="w-5 h-5 rounded-full bg-gradient-to-br from-violet-500 to-fuchsia-500 flex items-center justify-center text-[8px] font-bold">
+                      {toToken.symbol[0]}
+                    </div>
+                    <span className="text-sm font-medium">{toToken.symbol}</span>
+                  </>
+                ) : (
+                  <span className="text-sm text-gray-400">Select token</span>
+                )}
+              </button>
+            </div>
+            {toAmount && (
+              <div className="text-xs text-gray-500 mt-1">
+                ~$
+                {(parseFloat(toAmount) * 3245.12).toLocaleString()}
+              </div>
+            )}
+          </div>
+
+          {/* Route Info */}
+          {fromAmount && toAmount && (
+            <div className="bg-white/5 rounded-xl p-3 mb-4 space-y-1.5 text-xs">
+              <div className="flex justify-between">
+                <span className="text-gray-500">Rate</span>
+                <span>
+                  1 {fromToken?.symbol ?? "ETH"} = {3245.12}{" "}
+                  {toToken?.symbol ?? "USDC"}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-500">Price Impact</span>
+                <span className="text-emerald-400">&lt; 0.01%</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-500">Route</span>
+                <span className="text-violet-400">Uniswap → 1inch</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-500">Est. Gas</span>
+                <span>$3.42</span>
+              </div>
+            </div>
+          )}
+
+          {/* Action Button */}
+          {!isConnected ? (
+            <button className="w-full py-3 rounded-xl bg-gradient-to-r from-violet-500 to-fuchsia-500 font-semibold text-sm hover:opacity-90 transition-all glow">
               Connect Wallet
             </button>
-          ) : tabMode === "limit" ? (
+          ) : loading ? (
             <button
-              type="button"
-              disabled={!limitPrice || !fromAmount || txPending}
-              className="w-full rounded-xl bg-gradient-to-r from-violet-600 to-fuchsia-600 py-3.5 text-base font-semibold text-white transition-all hover:scale-[1.02] hover:from-violet-500 hover:to-fuchsia-500 disabled:opacity-40 disabled:hover:scale-100"
-            >
-              {txPending ? "Placing Order..." : "Place Limit Order"}
-            </button>
-          ) : quote.status === "loading" || simLoading ? (
-            <button
-              type="button"
               disabled
-              className="flex w-full items-center justify-center gap-2 rounded-xl bg-violet-600/50 py-3.5 text-base font-semibold text-white"
+              className="w-full py-3 rounded-xl bg-violet-500/50 font-semibold text-sm flex items-center justify-center gap-2"
             >
-              <RefreshCw className="h-4 w-4 animate-spin" />
-              Swapping...
-            </button>
-          ) : fromAmount ? (
-            <button
-              type="button"
-              onClick={handleSwap}
-              disabled={insufficientBalance || !quote || quote.status !== "success" || txPending}
-              className="w-full rounded-xl bg-gradient-to-r from-violet-600 to-fuchsia-600 py-3.5 text-base font-semibold text-white transition-all hover:scale-[1.02] hover:from-violet-500 hover:to-fuchsia-500 disabled:opacity-40 disabled:hover:scale-100"
-            >
-              {txPending ? "Confirming..." : "Swap"}
+              <RefreshCw className="w-4 h-4 animate-spin" /> Swapping...
             </button>
           ) : (
-            <button
-              type="button"
-              disabled
-              className="w-full rounded-xl bg-white/10 py-3.5 text-base font-semibold text-zinc-500"
-            >
-              Enter an amount
+            <button className="w-full py-3 rounded-xl bg-gradient-to-r from-violet-500 to-fuchsia-500 font-semibold text-sm hover:opacity-90 transition-all">
+              {mode === "market" ? "Swap" : "Place Limit Order"}
             </button>
           )}
         </div>
       </div>
+
+      {/* Right: Token Info Panel */}
+      <div className="w-full lg:w-80 space-y-4">
+        {/* Price Card */}
+        <div className="glass rounded-xl p-4">
+          <div className="flex items-center gap-2 mb-3">
+            <TrendingUp className="w-4 h-4 text-emerald-400" />
+            <h3 className="font-semibold text-sm">ETH/USDC Price</h3>
+          </div>
+          <div className="text-2xl font-bold">$3,245.12</div>
+          <div className="flex items-center gap-2 mt-1">
+            <span className="text-emerald-400 text-sm">+3.25%</span>
+            <span className="text-gray-500 text-xs">24h</span>
+          </div>
+          <div className="grid grid-cols-2 gap-3 mt-4 text-xs">
+            <div>
+              <div className="text-gray-500">24h High</div>
+              <div className="font-medium">$3,312.50</div>
+            </div>
+            <div>
+              <div className="text-gray-500">24h Low</div>
+              <div className="font-medium">$3,190.80</div>
+            </div>
+            <div>
+              <div className="text-gray-500">24h Volume</div>
+              <div className="font-medium">$18.2B</div>
+            </div>
+            <div>
+              <div className="text-gray-500">Liquidity</div>
+              <div className="font-medium text-emerald-400">$245M</div>
+            </div>
+          </div>
+        </div>
+
+        {/* Order Book Preview */}
+        <div className="glass rounded-xl p-4">
+          <div className="flex items-center gap-2 mb-3">
+            <BarChart3 className="w-4 h-4 text-violet-400" />
+            <h3 className="font-semibold text-sm">Order Book</h3>
+          </div>
+          <div className="space-y-1 text-xs">
+            {[
+              { price: 3245.5, amount: 12.5, total: 40568.75, side: "ask" },
+              { price: 3245.0, amount: 8.3, total: 26933.5, side: "ask" },
+              { price: 3244.8, amount: 15.2, total: 49320.96, side: "ask" },
+              { price: 3244.5, amount: 5.1, total: 16546.95, side: "ask" },
+            ].map((order, i) => (
+              <div
+                key={i}
+                className="flex justify-between text-red-400/80 relative"
+              >
+                <div
+                  className="absolute right-0 top-0 bottom-0 bg-red-500/5 rounded"
+                  style={{
+                    width: `${(order.total / 49320.96) * 100}%`,
+                  }}
+                />
+                <span className="relative z-10">
+                  {order.price.toFixed(1)}
+                </span>
+                <span className="relative z-10">{order.amount}</span>
+                <span className="relative z-10">
+                  ${order.total.toLocaleString()}
+                </span>
+              </div>
+            ))}
+            <div className="text-center text-white font-medium py-1 border-y border-white/5 my-1">
+              $3,244.20
+            </div>
+            {[
+              { price: 3243.8, amount: 10.2, total: 33086.76, side: "bid" },
+              { price: 3243.5, amount: 7.8, total: 25299.3, side: "bid" },
+              { price: 3243.0, amount: 20.5, total: 66481.5, side: "bid" },
+              { price: 3242.5, amount: 3.2, total: 10376.0, side: "bid" },
+            ].map((order, i) => (
+              <div
+                key={i}
+                className="flex justify-between text-emerald-400/80 relative"
+              >
+                <div
+                  className="absolute right-0 top-0 bottom-0 bg-emerald-500/5 rounded"
+                  style={{
+                    width: `${(order.total / 66481.5) * 100}%`,
+                  }}
+                />
+                <span className="relative z-10">
+                  {order.price.toFixed(1)}
+                </span>
+                <span className="relative z-10">{order.amount}</span>
+                <span className="relative z-10">
+                  ${order.total.toLocaleString()}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Recent Trades */}
+        <div className="glass rounded-xl p-4">
+          <h3 className="font-semibold text-sm mb-3">Recent Trades</h3>
+          <div className="space-y-2 text-xs">
+            {[
+              { type: "buy", amount: "0.45 ETH", price: "$3,245", time: "12s ago" },
+              { type: "sell", amount: "1.2 ETH", price: "$3,244", time: "34s ago" },
+              { type: "buy", amount: "0.08 ETH", price: "$3,246", time: "1m ago" },
+              { type: "buy", amount: "2.5 ETH", price: "$3,243", time: "2m ago" },
+              { type: "sell", amount: "0.33 ETH", price: "$3,245", time: "3m ago" },
+            ].map((trade, i) => (
+              <div key={i} className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div
+                    className={`w-1.5 h-1.5 rounded-full ${
+                      trade.type === "buy" ? "bg-emerald-400" : "bg-red-400"
+                    }`}
+                  />
+                  <span>{trade.amount}</span>
+                </div>
+                <span className="text-gray-400">{trade.price}</span>
+                <span className="text-gray-500">{trade.time}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* Token Select Modal */}
+      <TokenSelectModal
+        open={tokenModal !== null}
+        onClose={() => setTokenModal(null)}
+        onSelect={(token) => {
+          if (tokenModal === "from") {
+            setFromToken(token);
+          } else {
+            setToToken(token);
+          }
+        }}
+        chainId={chainId}
+        excludeAddress={
+          tokenModal === "from"
+            ? toToken?.address
+            : fromToken?.address
+        }
+      />
     </div>
   );
 }
