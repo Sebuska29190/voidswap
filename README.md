@@ -1,36 +1,86 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# VoidSwap 🔮
+
+**Next-gen cross-chain DEX aggregator.** Swap, arbitrage, and track your DeFi portfolio across Ethereum, Base, Polygon, Arbitrum, Optimism, and Solana.
+
+![VoidSwap](public/og-image.png)
+
+## Features
+
+- ⚡ **Cross-Chain Swaps** — Market & Limit orders via Uniswap, 1inch, Jupiter, Binance
+- 🔍 **Arbitrage Scanner** — Real-time cross-DEX price disparities with confidence scoring
+- 📊 **Portfolio Tracker** — Multi-chain wallet tracking, PnL, allocation
+- 📈 **Trading Charts** — Professional candlestick charts with EMA, RSI, MACD, Volume
+- 🔔 **Price Alerts** — Push notifications when prices cross your thresholds
+- 🤖 **Trading Bots** — DCA (Dollar Cost Average) & Grid trading automation
+- 🦊 **Wallet Connect** — MetaMask, WalletConnect, Rainbow, Phantom, and more
+
+## Tech Stack
+
+| Layer | Tech |
+|-------|------|
+| **Frontend** | Next.js 16 + TypeScript |
+| **Web3** | wagmi v2 + viem + RainbowKit |
+| **Styling** | Tailwind CSS v4 + Framer Motion |
+| **Charts** | TradingView Lightweight Charts |
+| **DEX APIs** | 0x API, Jupiter API, 1inch API, Binance API |
 
 ## Getting Started
 
-First, run the development server:
+### Prerequisites
+
+- Node.js 18+
+- [WalletConnect Project ID](https://cloud.walletconnect.com)
+- [Alchemy API Key](https://www.alchemy.com)
+
+### Installation
 
 ```bash
+git clone https://github.com/Sebuska29190/voidswap.git
+cd voidswap
+cp .env.local.example .env.local
+# Edit .env.local with your API keys
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000) in your browser.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+### Environment Variables
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```env
+NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID=your_project_id
+NEXT_PUBLIC_ALCHEMY_ID=your_alchemy_key
+NEXT_PUBLIC_1INCH_KEY=your_1inch_key
+```
 
-## Learn More
+## Architecture
 
-To learn more about Next.js, take a look at the following resources:
+```
+src/
+├── app/              # Next.js App Router pages
+│   ├── dashboard/    # Portfolio overview
+│   ├── swap/         # Swap widget page
+│   ├── portfolio/    # Full portfolio tracker
+│   ├── charts/       # TradingView charts + TA
+│   ├── arbitrage/    # Cross-DEX scanner
+│   ├── alerts/       # Price alert manager
+│   └── bots/         # DCA/Grid bot dashboard
+├── components/
+│   ├── swap/         # Core swap widget
+│   └── layout/       # Navbar, providers
+├── lib/              # API clients, price fetchers
+└── types/            # TypeScript definitions
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Supported Chains
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+- Ethereum (mainnet)
+- Base
+- Polygon
+- Arbitrum
+- Optimism
+- Solana (via Jupiter)
 
-## Deploy on Vercel
+## License
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+MIT — Built by [Buska](https://github.com/Sebuska29190)
